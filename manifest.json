@@ -3,7 +3,6 @@
     "name": "timeline-rift",
     "version": "1.0.0",
     "description": "让不同聊天线里的同一角色随机闯入当前对话，制造平行世界串线效果。",
-    "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
