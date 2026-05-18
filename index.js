@@ -13,6 +13,12 @@ const initTimelineRift = () => {
         enabled_chars: {},
     };
 
+    // 状态锁：防止异线生成陷入死循环
+    let isGeneratingRift = false;
+    let currentRiftSourceId = '';
+    let messagesSinceLastRift = 0;
+    const RIFT_STYLES = ['glitch', 'note', 'terminal'];
+
     function getSettings() {
         if (!extensionSettings[EXT_NAME]) {
             extensionSettings[EXT_NAME] = Object.assign({}, DEFAULT_SETTINGS);
@@ -52,41 +58,113 @@ const initTimelineRift = () => {
         setPool(pool);
     }
 
-    function pickIntrusionMessage(currentCharName, currentChatId) {
-        const pool = getPool();
-        const charPool = pool[currentCharName];
-        if (!charPool) return null;
-        const otherIds = Object.keys(charPool).filter(id => id !== currentChatId);
-        if (!otherIds.length) return null;
-        const sourceChatId = otherIds[Math.floor(Math.random() * otherIds.length)];
-        const msgs = charPool[sourceChatId];
-        if (!msgs || !msgs.length) return null;
-        const charMsgs = msgs.filter(m => m.role === 'char' && m.content && m.content.trim().length > 10);
-        if (!charMsgs.length) return null;
-        const msg = charMsgs[Math.floor(Math.random() * charMsgs.length)];
-        return { content: msg.content, sourceChatId };
-    }
+    // ===== 核心功能重写：不再抽取单句死台词，而是实时读取另一条线的上下文并命令LLM生成 =====
+    async function tryTriggerRift() {
+        if (isGeneratingRift) return; // 正在生成异线时不再触发
 
-    let messagesSinceLastRift = 0;
-    const RIFT_STYLES = ['glitch', 'note', 'terminal'];
-
-    function tryTriggerRift() {
         const settings = getSettings();
         if (!settings.enabled) return;
+        
         const ctx = SillyTavern.getContext();
-        if (!ctx || !ctx.name2 || !ctx.chatId) return;
+        if (!ctx || !ctx.name2 || !ctx.chatId || !ctx.character_id) return;
+        
         messagesSinceLastRift++;
         if (messagesSinceLastRift < settings.min_interval) return;
         if (Math.random() * 100 > settings.probability) return;
+        
+        // 寻找符合条件的其他时间线
+        const charName = ctx.name2;
+        const currentChatId = ctx.chatId;
+        const charCfg = settings.enabled_chars[charName];
+        if (!charCfg || !charCfg.enabled) return;
+
+        // 获取酒馆里该角色的所有活跃档案
+        let chatFiles = [];
+        try {
+            const headers = typeof getRequestHeaders === 'function' ? getRequestHeaders() : { 'Content-Type': 'application/json' };
+            const response = await fetch('/api/characters/chats', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ avatar_url: ctx.characters[ctx.character_id].avatar })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const rawChats = Array.isArray(data) ? data : Object.values(data || {});
+                chatFiles = rawChats.map(c => typeof c === 'string' ? chatId : (c.file_name || c.id)).filter(id => id && id !== currentChatId);
+            }
+        } catch (e) { console.error('[Rift] 获取在线列表失败', e); }
+
+        // 如果云端没查到，降级使用本地池
+        if (!chatFiles.length) {
+            const pool = getPool();
+            if (pool[charName]) {
+                chatFiles = Object.keys(pool[charName]).filter(id => id !== currentChatId);
+            }
+        }
+
+        // 过滤掉被玩家在面板上关闭了的时间线
+        const activeOtherChats = chatFiles.filter(id => charCfg.chats[id] !== false);
+        if (!activeOtherChats.length) return;
+
+        // 随机抽选一条“异时间线”
+        const sourceChatId = activeOtherChats[Math.floor(Math.random() * activeOtherChats.length)];
         messagesSinceLastRift = 0;
-        const intrusion = pickIntrusionMessage(ctx.name2, ctx.chatId);
-        if (!intrusion) return;
-        const shortId = intrusion.sourceChatId.slice(-6);
-        const style = RIFT_STYLES[Math.floor(Math.random() * RIFT_STYLES.length)];
-        const content = escapeHtml(intrusion.content);
-        const mes = `<rift style="${style}" from="${shortId}" char="${escapeHtml(ctx.name2)}">${content}</rift>`;
+        isGeneratingRift = true;
+        currentRiftSourceId = sourceChatId;
+
+        // 读取那条时间线的最后几句话，作为记忆碎片
+        let otherContextText = "未知时空混乱，记忆模糊...";
+        try {
+            const headers = typeof getRequestHeaders === 'function' ? getRequestHeaders() : { 'Content-Type': 'application/json' };
+            const res = await fetch('/api/chats/get', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ avatar_url: ctx.characters[ctx.character_id].avatar, file_name: sourceChatId })
+            });
+            if (res.ok) {
+                const chatData = await res.json();
+                if (Array.isArray(chatData) && chatData.length) {
+                    otherContextText = chatData.filter(m => !m.is_system).slice(-5).map(m => `${m.is_user ? '玩家' : charName}: ${m.mes}`).join('\n');
+                }
+            }
+        } catch (e) {
+            // 降级使用本地池记忆
+            const pool = getPool();
+            if (pool[charName] && pool[charName][sourceChatId]) {
+                otherContextText = pool[charName][sourceChatId].slice(-5).map(m => `${m.role === 'user' ? '玩家' : charName}: ${m.content}`).join('\n');
+            }
+        }
+
+        // 构造高能记忆入侵的【系统隐蔽提示】，强迫LLM实时扮演闯入者
         const { addOneMessage } = SillyTavern.getContext();
-        addOneMessage({ name: `异线·${ctx.name2}`, is_user: false, is_system: true, mes, extra: { rift: true } });
+        const shortId = sourceChatId.slice(-6);
+        
+        const systemPrompt = `【时空裂缝爆发：平行現実世界入侵】
+警告：当前时间线遭遇高能穿透！另一个平行宇宙的你（${charName}）由于强烈情感或因果共振，声音瞬间在当前时空炸裂。
+你在那个宇宙（时间线ID: ${shortId}）里，刚刚经历的最新记忆画面如下：
+=========================
+${otherContextText}
+=========================
+现在，请你彻底切入那个平行宇宙的记忆、立场、重创或执念，打破当前的日常对白，以一个【跨境闯入者】的身份，对当前宇宙的局面、玩家或当下的自己，进行一次【实时高能的跨界发言】！你的话语中必须暴露出你带过来的那个世界的记忆、秘密或极端情绪！`;
+
+        // 塞入系统指示，并立刻驱动酒馆生成新消息
+        addOneMessage({
+            name: "SYSTEM",
+            is_user: false,
+            is_system: true,
+            mes: `🌀 [时空不稳定：检测到来自平行线档案 [${shortId}] 的意识正在强行闯入...]`,
+            extra: { rift_announcement: true }
+        });
+
+        setTimeout(() => {
+            // 偷偷把系统注入写入当前生成的隐式前缀里
+            const currentChat = SillyTavern.getContext().chat;
+            if (currentChat && currentChat.length) {
+                currentChat[currentChat.length - 1].mes += `\n\n[MANDATORY SYSTEM DIRECTIVE FOR NEXT RESPONSE: ${systemPrompt}]`;
+            }
+            // 模拟触发酒馆生成按钮，让LLM现场写词
+            $('#send_button').click();
+        }, 300);
     }
 
     async function renderCharList() {
@@ -97,29 +175,28 @@ const initTimelineRift = () => {
         const allChars = ctx.characters || [];
         if (!allChars.length) { $list.html('<div class="rift-empty">没有找到角色卡</div>'); return; }
         $list.empty();
+        
         for (const char of allChars) {
             const charName = char.name;
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 核心修复：将 list 改为了真正获取记录的 get 接口 =====
             let chatFiles = [];
             try {
-                const data = await $.ajax({
-                    url: '/api/chats/get',  // 之前写错成了 list，这是罪魁祸首
-                    type: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ 
-                        avatar_url: char.avatar,
-                        character_avatar: char.avatar
-                    })
+                const headers = typeof getRequestHeaders === 'function' ? getRequestHeaders() : { 'Content-Type': 'application/json' };
+                const response = await fetch('/api/characters/chats', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ avatar_url: char.avatar })
                 });
-                const rawChats = Array.isArray(data) ? data : Object.values(data || {});
-                chatFiles = rawChats.map(c => typeof c === 'string' ? { file_name: c } : c);
+                if (response.ok) {
+                    const data = await response.json();
+                    const rawChats = Array.isArray(data) ? data : Object.values(data || {});
+                    chatFiles = rawChats.map(c => typeof c === 'string' ? { file_name: c } : c);
+                }
             } catch (err) {
                 console.error('[Rift] 获取聊天记录失败:', err);
             }
-            // =================================================================
 
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
@@ -152,13 +229,45 @@ const initTimelineRift = () => {
         await loadSettingsPanel();
     });
 
-    eventSource.on(event_types.MESSAGE_RECEIVED, () => { syncCurrentChat(); tryTriggerRift(); });
-    eventSource.on(event_types.CHAT_CHANGED, () => { messagesSinceLastRift=0; syncCurrentChat(); });
+    // 拦截AI生成完的信息，打上异线标志和特效标签
+    eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+        const ctx = SillyTavern.getContext();
+        if (!ctx || !ctx.chat || !ctx.chat.length) return;
+        
+        const lastMsg = ctx.chat[ctx.chat.length - 1];
+        
+        // 如果是刚刚被我们催生出来的异线消息
+        if (isGeneratingRift && lastMsg && !lastMsg.is_user && !lastMsg.is_system && !lastMsg.extra?.rift) {
+            const shortId = currentRiftSourceId.slice(-6);
+            const style = RIFT_STYLES[Math.floor(Math.random() * RIFT_STYLES.length)];
+            
+            // 冠以异线假名，并包裹特效UI标签
+            lastMsg.name = `异线·${ctx.name2}`;
+            lastMsg.mes = `<rift style="${style}" from="${shortId}" char="${ctx.name2}">${lastMsg.mes}</rift>`;
+            lastMsg.extra = lastMsg.extra || {};
+            lastMsg.extra.rift = true;
+            
+            isGeneratingRift = false; // 解锁
+            
+            // 刷新当前聊天UI，让假名和特效当场渲染生效
+            if (typeof renderChat === 'function') renderChat();
+            else if (ctx.renderChat) ctx.renderChat();
+        } else if (!isGeneratingRift && lastMsg && !lastMsg.is_user && !lastMsg.is_system) {
+            // 如果是普通的AI正常回话结束，则记录历史并进行概率判定，看是否触发闯入
+            syncCurrentChat();
+            tryTriggerRift();
+        }
+    });
 
-    console.log('[Timeline Rift] 已加载');
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        messagesSinceLastRift = 0;
+        isGeneratingRift = false;
+        syncCurrentChat();
+    });
+
+    console.log('[Timeline Rift] 实时高能代入版已加载');
 };
 
-// 等待酒馆核心就绪
 const riftInterval = setInterval(() => {
     if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
         clearInterval(riftInterval);
