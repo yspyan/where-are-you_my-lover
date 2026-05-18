@@ -9,5 +9,6 @@
     "css": "style.css",
     "author": "anim",
     "homePage": "",
-    "auto_update": true
+    "auto_update": true,
+    "setting_icon": "fa-solid fa-circle-nodes"
 }
