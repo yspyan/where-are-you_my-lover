@@ -102,10 +102,10 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 已修复：支持最新版酒馆的官方专属角色记录接口 =====
+            // ===== 终极修复：使用酒馆官方标准的获取历史聊天列表接口 =====
             let chatFiles = [];
             try {
-                const resp = await fetch('/api/characters/chats', {
+                const resp = await fetch('/api/chats/list', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ avatar_url: char.avatar })
