@@ -102,27 +102,26 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 核心修复：自动获取酒馆原生安全请求头，带上密钥绕过验证 =====
+            // ===== 核心修复：改用酒馆内置的 $.ajax，自动继承所有安全令牌，全版本字段兼容 =====
             let chatFiles = [];
             try {
-                const baseHeaders = typeof getHeaders === 'function' ? getHeaders() : {};
-                const resp = await fetch('/api/chats/list', {
-                    method: 'POST',
-                    headers: {
-                        ...baseHeaders,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ avatar_url: char.avatar })
+                const data = await $.ajax({
+                    url: '/api/chats/list',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ 
+                        avatar_url: char.avatar,
+                        character_avatar: char.avatar,
+                        id: char.id,
+                        uuid: char.uuid
+                    })
                 });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const rawChats = Array.isArray(data) ? data : Object.values(data || {});
-                    chatFiles = rawChats.map(c => typeof c === 'string' ? { file_name: c } : c);
-                }
+                const rawChats = Array.isArray(data) ? data : Object.values(data || {});
+                chatFiles = rawChats.map(c => typeof c === 'string' ? { file_name: c } : c);
             } catch (err) {
                 console.error('[Rift] 获取聊天记录失败:', err);
             }
-            // ================================================================
+            // =================================================================================
 
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
@@ -161,7 +160,7 @@ const initTimelineRift = () => {
     console.log('[Timeline Rift] 已加载');
 };
 
-// 等待酒馆核心就绪，兼容所有设备
+// 等待酒馆核心就绪
 const riftInterval = setInterval(() => {
     if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
         clearInterval(riftInterval);
