@@ -102,16 +102,22 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 唯一修改：使用官方 /api/chats 获取聊天记录，手机电脑通用 =====
+            // ===== 已修复：支持最新版酒馆的官方专属角色记录接口 =====
             let chatFiles = [];
             try {
-                const resp = await fetch('/api/chats');
+                const resp = await fetch('/api/characters/chats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ avatar_url: char.avatar })
+                });
                 if (resp.ok) {
                     const data = await resp.json();
-                    const allChats = Array.isArray(data) ? data : (data.chats || []);
-                    chatFiles = allChats.filter(c => (c.character_name || c.name2 || '') === charName);
+                    const rawChats = Array.isArray(data) ? data : Object.values(data || {});
+                    chatFiles = rawChats.map(c => typeof c === 'string' ? { file_name: c } : c);
                 }
-            } catch {}
+            } catch (err) {
+                console.error('[Rift] 获取聊天记录失败:', err);
+            }
             // ================================================================
 
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
