@@ -1,6 +1,6 @@
 // 安全启动外壳，确保酒馆核心就绪后才加载插件
 const initTimelineRift = () => {
-    const { getContext, saveSettingsDebounced, renderExtensionTemplateAsync, eventSource, event_types } = SillyTavern.getContext();
+    const { getContext, saveSettingsDebounced, eventSource, event_types } = SillyTavern.getContext();
     const { extensionSettings } = SillyTavern.getContext();
 
     const EXT_NAME = 'timeline-rift';
@@ -101,17 +101,19 @@ const initTimelineRift = () => {
             const charName = char.name;
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
-            // ========== 唯一修改的地方：直接从酒馆本地存储读取聊天记录 ==========
+
+            // ========== 从酒馆服务器API获取聊天记录列表（官方标准做法） ==========
             let chatFiles = [];
             try {
-                const raw = localStorage.getItem('Chats');
-                if (raw) {
-                    const all = JSON.parse(raw);
-                    const list = Array.isArray(all) ? all : Object.values(all);
-                    chatFiles = list.filter(c => (c.character_name || c.name2 || '') === charName);
+                const resp = await fetch('/api/chats');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const allChats = Array.isArray(data) ? data : (data.chats || []);
+                    chatFiles = allChats.filter(c => (c.character_name || c.name2 || '') === charName);
                 }
             } catch {}
-            // ================================================================
+            // ====================================================================
+
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
             for (const cf of chatFiles) {
