@@ -1,6 +1,6 @@
-// 等待酒馆核心就绪
+// 安全启动外壳，确保酒馆核心就绪后才加载插件
 const initTimelineRift = () => {
-    const { getContext, saveSettingsDebounced, eventSource, event_types } = SillyTavern.getContext();
+    const { getContext, saveSettingsDebounced, renderExtensionTemplateAsync, eventSource, event_types } = SillyTavern.getContext();
     const { extensionSettings } = SillyTavern.getContext();
 
     const EXT_NAME = 'timeline-rift';
@@ -89,111 +89,40 @@ const initTimelineRift = () => {
         addOneMessage({ name: `异线·${ctx.name2}`, is_user: false, is_system: true, mes, extra: { rift: true } });
     }
 
-    // ★ 重写的 renderCharList —— 完全不用网络请求，直接读酒馆内存！
     async function renderCharList() {
         const settings = getSettings();
         const $list = $('#rift-char-list');
         $list.html('<div class="rift-empty">加载中…</div>');
         const ctx = SillyTavern.getContext();
-
-        // 1. 获取所有角色
-        let allChars = [];
-        try {
-            if (ctx.characters && ctx.characters.length) {
-                allChars = ctx.characters;
-            } else {
-                const raw = localStorage.getItem('characters');
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    allChars = Array.isArray(parsed) ? parsed : Object.values(parsed);
-                }
-            }
-        } catch (e) {
-            allChars = [];
-        }
-
-        if (!allChars.length) {
-            $list.html('<div class="rift-empty">没有找到角色卡，请先创建或导入角色</div>');
-            return;
-        }
-
-        // 2. 直接从酒馆内存获取所有聊天索引（不调任何 API！）
-        let allChats = [];
-        // 尝试 ctx.chats（这是酒馆内部常用的聊天列表数组）
-        if (ctx.chats && Array.isArray(ctx.chats)) {
-            allChats = ctx.chats;
-        }
-        // 如果上面没有，尝试从 localStorage 读取（酒馆有时把索引存在 'Chats' 里）
-        if (!allChats.length) {
-            try {
-                const rawIndex = localStorage.getItem('Chats');
-                if (rawIndex) {
-                    allChats = JSON.parse(rawIndex);
-                    if (!Array.isArray(allChats)) allChats = Object.values(allChats);
-                }
-            } catch (e) {}
-        }
-        // 最后尝试全局变量 window.chat_metadata
-        if (!allChats.length && window.chat_metadata) {
-            allChats = Object.values(window.chat_metadata);
-        }
-
+        const allChars = ctx.characters || [];
+        if (!allChars.length) { $list.html('<div class="rift-empty">没有找到角色卡</div>'); return; }
         $list.empty();
-
         for (const char of allChars) {
             const charName = char.name;
-            if (!settings.enabled_chars[charName]) {
-                settings.enabled_chars[charName] = { enabled: false, chats: {} };
-            }
+            if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
-
-            // 筛选出属于该角色的聊天记录
-            const chatFiles = allChats.filter(c => {
-                const chatChar = c.name || c.character_name || c.name2 || '';
-                return chatChar === charName;
-            });
-
-            const $item = $(`
-                <div class="rift-char-item">
-                    <div class="rift-char-header">
-                        <input type="checkbox" class="rift-char-enable" ${cfg.enabled ? 'checked' : ''}/>
-                        <span class="rift-char-name">${escapeHtml(charName)}</span>
-                        <span class="rift-char-toggle">${chatFiles.length ? '▾ ' + chatFiles.length + '条记录' : '无记录'}</span>
-                    </div>
-                    <div class="rift-chat-list ${cfg.enabled ? 'open' : ''}"></div>
-                </div>
-            `);
-
+            // ========== 唯一修改的地方：直接从酒馆本地存储读取聊天记录 ==========
+            let chatFiles = [];
+            try {
+                const raw = localStorage.getItem('Chats');
+                if (raw) {
+                    const all = JSON.parse(raw);
+                    const list = Array.isArray(all) ? all : Object.values(all);
+                    chatFiles = list.filter(c => (c.character_name || c.name2 || '') === charName);
+                }
+            } catch {}
+            // ================================================================
+            const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
-            for (const chat of chatFiles) {
-                const chatId = chat.file_name || chat.id || chat.chat_id || String(chat);
+            for (const cf of chatFiles) {
+                const chatId = cf.file_name || cf.id || String(cf);
                 const chatEnabled = cfg.chats[chatId] !== false;
-                $chatList.append(`
-                    <div class="rift-chat-item">
-                        <input type="checkbox" class="rift-chat-enable" data-chatid="${escapeHtml(chatId)}" ${chatEnabled ? 'checked' : ''}/>
-                        <span>${escapeHtml(chatId)}</span>
-                    </div>
-                `);
+                $chatList.append(`<div class="rift-chat-item"><input type="checkbox" class="rift-chat-enable" data-chatid="${escapeHtml(chatId)}" ${chatEnabled?'checked':''}/><span>${escapeHtml(chatId)}</span></div>`);
             }
-
-            if (!chatFiles.length) {
-                $chatList.append('<div style="opacity:0.4;font-size:0.82em;">暂无聊天记录</div>');
-            }
-
-            $item.find('.rift-char-enable').on('change', function () {
-                cfg.enabled = this.checked;
-                $chatList.toggleClass('open', this.checked);
-                saveSettingsDebounced();
-            });
-            $item.find('.rift-char-header').on('click', function (e) {
-                if ($(e.target).is('input')) return;
-                $chatList.toggleClass('open');
-            });
-            $item.find('.rift-chat-enable').on('change', function () {
-                cfg.chats[$(this).data('chatid')] = this.checked;
-                saveSettingsDebounced();
-            });
-
+            if (!chatFiles.length) $chatList.append('<div style="opacity:0.4;font-size:0.82em;">暂无聊天记录</div>');
+            $item.find('.rift-char-enable').on('change', function() { cfg.enabled=this.checked; $chatList.toggleClass('open',this.checked); saveSettingsDebounced(); });
+            $item.find('.rift-char-header').on('click', function(e) { if($(e.target).is('input'))return; $chatList.toggleClass('open'); });
+            $item.find('.rift-chat-enable').on('change', function() { cfg.chats[$(this).data('chatid')]=this.checked; saveSettingsDebounced(); });
             $list.append($item);
         }
         saveSettingsDebounced();
@@ -215,12 +144,12 @@ const initTimelineRift = () => {
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, () => { syncCurrentChat(); tryTriggerRift(); });
-    eventSource.on(event_types.CHAT_CHANGED, () => { messagesSinceLastRift = 0; syncCurrentChat(); });
+    eventSource.on(event_types.CHAT_CHANGED, () => { messagesSinceLastRift=0; syncCurrentChat(); });
 
-    console.log('[Timeline Rift] 已加载（无API版）');
+    console.log('[Timeline Rift] 已加载');
 };
 
-// 移动端安全启动
+// 移动端安全启动轮询
 const riftInterval = setInterval(() => {
     if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
         clearInterval(riftInterval);
