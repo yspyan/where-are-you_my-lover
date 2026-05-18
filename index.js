@@ -102,18 +102,16 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 核心修复：改用酒馆内置的 $.ajax，自动继承所有安全令牌，全版本字段兼容 =====
+            // ===== 核心修复：将 list 改为了真正获取记录的 get 接口 =====
             let chatFiles = [];
             try {
                 const data = await $.ajax({
-                    url: '/api/chats/list',
+                    url: '/api/chats/get',  // 之前写错成了 list，这是罪魁祸首
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ 
                         avatar_url: char.avatar,
-                        character_avatar: char.avatar,
-                        id: char.id,
-                        uuid: char.uuid
+                        character_avatar: char.avatar
                     })
                 });
                 const rawChats = Array.isArray(data) ? data : Object.values(data || {});
@@ -121,7 +119,7 @@ const initTimelineRift = () => {
             } catch (err) {
                 console.error('[Rift] 获取聊天记录失败:', err);
             }
-            // =================================================================================
+            // =================================================================
 
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
