@@ -1,4 +1,4 @@
-// 安全启动外壳，确保酒馆核心就绪后才加载插件
+// 安全启动：等酒馆核心加载完再运行，手机电脑都兼容
 const initTimelineRift = () => {
     const { getContext, saveSettingsDebounced, eventSource, event_types } = SillyTavern.getContext();
     const { extensionSettings } = SillyTavern.getContext();
@@ -102,7 +102,7 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ========== 从酒馆服务器API获取聊天记录列表（官方标准做法） ==========
+            // ===== 唯一修改：使用官方 /api/chats 获取聊天记录，手机电脑通用 =====
             let chatFiles = [];
             try {
                 const resp = await fetch('/api/chats');
@@ -112,7 +112,7 @@ const initTimelineRift = () => {
                     chatFiles = allChats.filter(c => (c.character_name || c.name2 || '') === charName);
                 }
             } catch {}
-            // ====================================================================
+            // ================================================================
 
             const $item = $(`<div class="rift-char-item"><div class="rift-char-header"><input type="checkbox" class="rift-char-enable" ${cfg.enabled?'checked':''}/><span class="rift-char-name">${escapeHtml(charName)}</span><span class="rift-char-toggle">${chatFiles.length?'▾ '+chatFiles.length+'条记录':'无记录'}</span></div><div class="rift-chat-list ${cfg.enabled?'open':''}"></div></div>`);
             const $chatList = $item.find('.rift-chat-list');
@@ -151,7 +151,7 @@ const initTimelineRift = () => {
     console.log('[Timeline Rift] 已加载');
 };
 
-// 移动端安全启动轮询
+// 等待酒馆核心就绪，兼容所有设备
 const riftInterval = setInterval(() => {
     if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
         clearInterval(riftInterval);
