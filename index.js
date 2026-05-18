@@ -102,12 +102,16 @@ const initTimelineRift = () => {
             if (!settings.enabled_chars[charName]) settings.enabled_chars[charName] = { enabled: false, chats: {} };
             const cfg = settings.enabled_chars[charName];
 
-            // ===== 终极修复：使用酒馆官方标准的获取历史聊天列表接口 =====
+            // ===== 核心修复：自动获取酒馆原生安全请求头，带上密钥绕过验证 =====
             let chatFiles = [];
             try {
+                const baseHeaders = typeof getHeaders === 'function' ? getHeaders() : {};
                 const resp = await fetch('/api/chats/list', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        ...baseHeaders,
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({ avatar_url: char.avatar })
                 });
                 if (resp.ok) {
