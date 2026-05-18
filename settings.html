@@ -1,0 +1,30 @@
+<div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+        <b>Timeline Rift · 异线闯入</b>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+        <div class="rift-section">
+            <label><input type="checkbox" id="rift-enabled" />&nbsp;启用异线闯入</label>
+        </div>
+        <div class="rift-section">
+            <label>触发概率</label>
+            <div class="rift-row">
+                <input type="range" id="rift-probability" min="1" max="50" />
+                <span class="rift-val" id="rift-probability-val"></span>
+            </div>
+        </div>
+        <div class="rift-section">
+            <label>最少间隔消息数</label>
+            <div class="rift-row">
+                <input type="range" id="rift-interval" min="1" max="30" />
+                <span class="rift-val" id="rift-interval-val"></span>
+            </div>
+        </div>
+        <div class="rift-section">
+            <label>参与串线的角色卡与聊天记录</label>
+            <button id="rift-refresh-btn" class="menu_button">🔄 刷新列表</button>
+            <div id="rift-char-list"><div class="rift-empty">加载中…</div></div>
+        </div>
+    </div>
+</div>
