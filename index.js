@@ -122,7 +122,7 @@ async function loadSettingsPanel() {
         <label><input type="checkbox" id="rift-enabled" ${settings.enabled ? 'checked' : ''}/>&nbsp;启用异线闯入</label>
     </div>
     <div class="rift-section">
-        <label>触发概率（每条消息）</label>
+        <label>触发概率</label>
         <div class="rift-row">
             <input type="range" id="rift-probability" min="1" max="50" value="${settings.probability}" />
             <span class="rift-val" id="rift-probability-val">${settings.probability}%</span>
@@ -142,7 +142,7 @@ async function loadSettingsPanel() {
     </div>
 </div>`;
 
-    $('#extensions_settings2').append(`
+    $('#extensions_settings').append(`
 <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
         <b>Timeline Rift · 异线闯入</b>
@@ -241,7 +241,10 @@ async function renderCharList() {
 }
 
 jQuery(async () => {
-    await loadSettingsPanel();
+    setTimeout(async () => {
+        await loadSettingsPanel();
+    }, 2000);
+
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
         syncCurrentChat();
         tryTriggerRift();
